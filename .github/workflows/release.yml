@@ -17,11 +17,11 @@ jobs:
       with:
         go-version: 1.19
 
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@v2
-
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v2
+#    - name: Set up QEMU
+#      uses: docker/setup-qemu-action@v2
+#
+#    - name: Set up Docker Buildx
+#      uses: docker/setup-buildx-action@v2
 
     - name: Log in to the Container registry
       uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
@@ -30,5 +30,15 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Release
-      run: make docker-buildx VERSION=$GITHUB_REF_NAME
+    - name: Build and push Docker image
+      uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
+      with:
+        context: .
+        file: ./Dockerfile
+        platforms: ${{ matrix.platforms }}
+        push: true
+        outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=Kube-stager prometheus-static-target operator
+
+#
+#    - name: Release
+#      run: make docker-buildx VERSION=$GITHUB_REF_NAME
