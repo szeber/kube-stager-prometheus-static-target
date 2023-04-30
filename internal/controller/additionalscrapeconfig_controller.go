@@ -135,6 +135,10 @@ func (r *AdditionalScrapeConfigReconciler) updateSecret(ctx context.Context, log
 		return err
 	}
 
+	sort.Slice(jobs, func(i, j int) bool {
+		return jobs[i].JobName < jobs[j].JobName
+	})
+
 	yamlData, err := yaml.Marshal(jobs)
 	if nil != err {
 		return err
