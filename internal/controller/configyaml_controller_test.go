@@ -292,9 +292,20 @@ func (r *matchSecretDataMatcher) Match(actual interface{}) (success bool, err er
 }
 
 func (r *matchSecretDataMatcher) FailureMessage(actual interface{}) (message string) {
-	return fmt.Sprintf("Failed to assert that %+v is a valid secret data", actual)
+	return fmt.Sprintf("Failed to assert that %+v is a valid secret data", r.getActualAsStringMap(actual))
 }
 
 func (r *matchSecretDataMatcher) NegatedFailureMessage(actual interface{}) (message string) {
-	return fmt.Sprintf("Failed to assert that %+v is not a valid secret data", actual)
+	return fmt.Sprintf("Failed to assert that %+v is not a valid secret data", r.getActualAsStringMap(actual))
+}
+
+func (r *matchSecretDataMatcher) getActualAsStringMap(actual interface{}) map[string]string {
+	actualMap := actual.(map[string][]byte)
+	stringData := make(map[string]string)
+
+	for k, v := range actualMap {
+		stringData[k] = string(v)
+	}
+
+	return stringData
 }
