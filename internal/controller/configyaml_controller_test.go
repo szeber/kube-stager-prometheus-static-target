@@ -109,7 +109,7 @@ var _ = Describe("Additional Scrape Config controller", func() {
 			StaticConfigs: []prometheusv1.ScrapeJobStaticConfig{
 				{
 					Targets: []string{"http://test2"},
-					Labels:  map[string]string{"job": "test1"},
+					Labels:  map[string]string{"job": "test2"},
 				},
 			},
 		})
@@ -118,7 +118,7 @@ var _ = Describe("Additional Scrape Config controller", func() {
 			StaticConfigs: []prometheusv1.ScrapeJobStaticConfig{
 				{
 					Targets: []string{"http://different-namespace"},
-					Labels:  map[string]string{"job": "test1"},
+					Labels:  map[string]string{"job": "different-namespace"},
 				},
 			},
 		})
@@ -127,7 +127,7 @@ var _ = Describe("Additional Scrape Config controller", func() {
 			StaticConfigs: []prometheusv1.ScrapeJobStaticConfig{
 				{
 					Targets: []string{"http://invalid"},
-					Labels:  map[string]string{"job": "test1"},
+					Labels:  map[string]string{"job": "invalid"},
 				},
 			},
 		})
@@ -304,7 +304,7 @@ func (r *matchSecretDataMatcher) getActualAsStringMap(actual interface{}) map[st
 	stringData := make(map[string]string)
 
 	for k, v := range actualMap {
-		stringData[k] = string(v)
+		stringData[k] = "\n" + string(v) + "\n"
 	}
 
 	return stringData
