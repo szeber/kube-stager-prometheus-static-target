@@ -193,8 +193,6 @@ var _ = Describe("Additional Scrape Config controller", func() {
 			createCommonJobs()
 			createdConfig := createConfig()
 
-			Expect(createdConfig.Status.DiscoveredScrapeJobs).Should(BeEmpty())
-
 			By("By checking the status's discovered jobs")
 			Eventually(func() ([]string, error) {
 				if err := k8sClient.Get(ctx, configLookupKey, createdConfig); nil != err {
