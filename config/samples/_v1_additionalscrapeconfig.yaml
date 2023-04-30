@@ -1,0 +1,20 @@
+apiVersion: prometheus-static-target.kube-stager.io/v1
+kind: AdditionalScrapeConfig
+metadata:
+  labels:
+    app.kubernetes.io/name: additionalscrapeconfig
+    app.kubernetes.io/instance: additionalscrapeconfig-sample
+    app.kubernetes.io/part-of: prometheus-static-target
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: prometheus-static-target
+  name: additionalscrapeconfig-sample
+spec:
+  secretName: prometheus-static-targets
+  secretNamespace: foo
+  secretKey: prometheus-additional.yml
+  scrapeJobLabels:
+    prometheus: test
+#  scrapeJobNamespaceSelector:
+#    any: false
+#    matchNames:
+#    - bar

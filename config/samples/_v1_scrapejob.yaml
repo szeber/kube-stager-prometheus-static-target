@@ -1,0 +1,18 @@
+apiVersion: prometheus-static-target.kube-stager.io/v1
+kind: ScrapeJob
+metadata:
+  labels:
+    app.kubernetes.io/name: scrapejob
+    app.kubernetes.io/instance: scrapejob-sample
+    app.kubernetes.io/part-of: prometheus-static-target
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: prometheus-static-target
+    prometheus: test
+  name: scrapejob-sample
+spec:
+  jobName: foo
+  staticConfigs:
+  - targets:
+    - foo.localdomain
+    labels:
+      service: foo
