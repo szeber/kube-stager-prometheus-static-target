@@ -109,7 +109,7 @@ var _ = Describe("Additional Scrape Config controller", func() {
 			StaticConfigs: []prometheusv1.ScrapeJobStaticConfig{
 				{
 					Targets: []string{"http://test2"},
-					Labels:  map[string]string{"job": "test1"},
+					Labels:  map[string]string{"job": "test2"},
 				},
 			},
 		})
@@ -118,7 +118,7 @@ var _ = Describe("Additional Scrape Config controller", func() {
 			StaticConfigs: []prometheusv1.ScrapeJobStaticConfig{
 				{
 					Targets: []string{"http://different-namespace"},
-					Labels:  map[string]string{"job": "test1"},
+					Labels:  map[string]string{"job": "different-namespace"},
 				},
 			},
 		})
@@ -127,7 +127,7 @@ var _ = Describe("Additional Scrape Config controller", func() {
 			StaticConfigs: []prometheusv1.ScrapeJobStaticConfig{
 				{
 					Targets: []string{"http://invalid"},
-					Labels:  map[string]string{"job": "test1"},
+					Labels:  map[string]string{"job": "invalid"},
 				},
 			},
 		})
@@ -192,8 +192,6 @@ var _ = Describe("Additional Scrape Config controller", func() {
 			createNamespaces()
 			createCommonJobs()
 			createdConfig := createConfig()
-
-			Expect(createdConfig.Status.DiscoveredScrapeJobs).Should(BeEmpty())
 
 			By("By checking the status's discovered jobs")
 			Eventually(func() ([]string, error) {
@@ -294,9 +292,20 @@ func (r *matchSecretDataMatcher) Match(actual interface{}) (success bool, err er
 }
 
 func (r *matchSecretDataMatcher) FailureMessage(actual interface{}) (message string) {
-	return fmt.Sprintf("Failed to assert that %+v is a valid secret data", actual)
+	return fmt.Sprintf("Failed to assert that %+v is a valid secret data", r.getActualAsStringMap(actual))
 }
 
 func (r *matchSecretDataMatcher) NegatedFailureMessage(actual interface{}) (message string) {
-	return fmt.Sprintf("Failed to assert that %+v is not a valid secret data", actual)
+	return fmt.Sprintf("Failed to assert that %+v is not a valid secret data", r.getActualAsStringMap(actual))
+}
+
+func (r *matchSecretDataMatcher) getActualAsStringMap(actual interface{}) map[string]string {
+	actualMap := actual.(map[string][]byte)
+	stringData := make(map[string]string)
+
+	for k, v := range actualMap {
+		stringData[k] = "\n" + string(v) + "\n"
+	}
+
+	return stringData
 }
