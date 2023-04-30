@@ -42,23 +42,24 @@ jobs:
 #    - name: Run tests
 #      run: make test
 
-    - name: Build and push Docker image
-      uses: docker/build-push-action@v4
-      with:
-        context: .
-        file: ./Dockerfile
-#        platforms: linux/arm64,linux/amd64
-        platforms: linux/amd64
-        push: true
-        outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=Kube-stager prometheus-static-target operator
-        tags: |
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+#    - name: Build and push Docker image
+#      uses: docker/build-push-action@v4
+#      with:
+#        context: .
+#        file: ./Dockerfile
+##        platforms: linux/arm64,linux/amd64
+#        platforms: linux/amd64
+#        push: true
+#        outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=Kube-stager prometheus-static-target operator
+#        tags: |
+#          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+
+
+    - name: Release
+      run: make docker-buildx VERSION=$GITHUB_REF_NAME
 
     - name: List image
       run: |
         docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
         docker image ls ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
-#
-#    - name: Release
-#      run: make docker-buildx VERSION=$GITHUB_REF_NAME
