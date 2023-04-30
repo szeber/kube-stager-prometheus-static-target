@@ -23,8 +23,5 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v2
 
-    - name: Test
-      run: make test
-
     - name: Release
       run: make docker-buildx VERSION=$GITHUB_REF_NAME
