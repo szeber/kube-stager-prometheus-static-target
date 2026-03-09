@@ -2,7 +2,6 @@ package kubernetes
 
 import (
 	"context"
-	"fmt"
 	prometheusv1 "github.com/szeber/kube-stager-prometheus-static-target/api/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -29,10 +28,6 @@ func (r *Client) GetAdditionalScrapeConfig(ctx context.Context, namespace string
 
 func (r *Client) LoadScrapeJobs(ctx context.Context, config *prometheusv1.AdditionalScrapeConfig) (*prometheusv1.ScrapeJobList, error) {
 	scrapeJobList := &prometheusv1.ScrapeJobList{}
-	labelSelector := client.HasLabels{}
-	for k, v := range config.Spec.ScrapeJobLabels {
-		labelSelector = append(labelSelector, fmt.Sprintf("%s=%s", k, v))
-	}
 	err := r.parentClient.List(ctx, scrapeJobList, client.MatchingLabels(config.Spec.ScrapeJobLabels))
 
 	return scrapeJobList, err
@@ -70,20 +65,19 @@ func (r *Client) CreateOrUpdateSecret(ctx context.Context, secretExists bool, se
 	return r.parentClient.Create(ctx, secret)
 }
 
-func (r *Client) FindAdditionalScrapeConfigsForSecret(secret client.Object) (*prometheusv1.AdditionalScrapeConfigList, error) {
+func (r *Client) FindAdditionalScrapeConfigsForSecret(ctx context.Context, secret client.Object) (*prometheusv1.AdditionalScrapeConfigList, error) {
 	configList := &prometheusv1.AdditionalScrapeConfigList{}
 	listOpts := &client.ListOptions{
 		FieldSelector: fields.OneTermEqualSelector(".spec.secretName", secret.GetName()),
 	}
-	err := r.parentClient.List(context.TODO(), configList, listOpts)
+	err := r.parentClient.List(ctx, configList, listOpts)
 
 	return configList, err
 }
 
-func (r *Client) GetAllAdditionalScrapeConfigs() (*prometheusv1.AdditionalScrapeConfigList, error) {
+func (r *Client) GetAllAdditionalScrapeConfigs(ctx context.Context) (*prometheusv1.AdditionalScrapeConfigList, error) {
 	allConfigs := &prometheusv1.AdditionalScrapeConfigList{}
-	listOpts := &client.ListOptions{}
-	err := r.parentClient.List(context.TODO(), allConfigs, listOpts)
+	err := r.parentClient.List(ctx, allConfigs)
 
 	return allConfigs, err
 }

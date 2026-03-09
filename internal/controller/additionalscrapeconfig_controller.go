@@ -30,7 +30,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
-	"sigs.k8s.io/controller-runtime/pkg/source"
 	"sort"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -154,13 +153,13 @@ func (r *AdditionalScrapeConfigReconciler) updateSecret(ctx context.Context, log
 
 	logger.Info("Updating secret")
 	secret.Data[config.Spec.SecretKey] = yamlData
-	logger.Info(fmt.Sprintf("Updating secret to %+v", secret.Data))
+	logger.V(1).Info(fmt.Sprintf("Updating secret to %+v", secret.Data))
 
 	return r.KubeClient.CreateOrUpdateSecret(ctx, secretExists, secret)
 }
 
-func (r *AdditionalScrapeConfigReconciler) findConfigsForSecret(secret client.Object) []reconcile.Request {
-	configYamlList, err := r.KubeClient.FindAdditionalScrapeConfigsForSecret(secret)
+func (r *AdditionalScrapeConfigReconciler) findConfigsForSecret(ctx context.Context, secret client.Object) []reconcile.Request {
+	configYamlList, err := r.KubeClient.FindAdditionalScrapeConfigsForSecret(ctx, secret)
 	if err != nil {
 		return []reconcile.Request{}
 	}
@@ -180,8 +179,8 @@ func (r *AdditionalScrapeConfigReconciler) findConfigsForSecret(secret client.Ob
 	return requests
 }
 
-func (r *AdditionalScrapeConfigReconciler) findConfigsForJobs(target client.Object) []reconcile.Request {
-	allConfigYamls, err := r.KubeClient.GetAllAdditionalScrapeConfigs()
+func (r *AdditionalScrapeConfigReconciler) findConfigsForJobs(ctx context.Context, target client.Object) []reconcile.Request {
+	allConfigYamls, err := r.KubeClient.GetAllAdditionalScrapeConfigs(ctx)
 	if err != nil {
 		return []reconcile.Request{}
 	}
@@ -190,7 +189,7 @@ func (r *AdditionalScrapeConfigReconciler) findConfigsForJobs(target client.Obje
 
 	var requests []reconcile.Request
 	for _, item := range allConfigYamls.Items {
-		if !item.Spec.ScrapeJobNamespaceSelector.Matches(target.GetNamespace(), item.GetName()) {
+		if !item.Spec.ScrapeJobNamespaceSelector.Matches(target.GetNamespace(), item.GetNamespace()) {
 			continue
 		}
 
@@ -198,10 +197,15 @@ func (r *AdditionalScrapeConfigReconciler) findConfigsForJobs(target client.Obje
 			continue
 		}
 
+		matched := true
 		for key, value := range item.Spec.ScrapeJobLabels {
 			if targetLabels[key] != value {
-				continue
+				matched = false
+				break
 			}
+		}
+		if !matched {
+			continue
 		}
 
 		requests = append(
@@ -237,12 +241,12 @@ func (r *AdditionalScrapeConfigReconciler) SetupWithManager(mgr ctrl.Manager) er
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&prometheusv1.AdditionalScrapeConfig{}).
 		Watches(
-			&source.Kind{Type: &corev1.Secret{}},
+			&corev1.Secret{},
 			handler.EnqueueRequestsFromMapFunc(r.findConfigsForSecret),
 			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
 		).
 		Watches(
-			&source.Kind{Type: &prometheusv1.ScrapeJob{}},
+			&prometheusv1.ScrapeJob{},
 			handler.EnqueueRequestsFromMapFunc(r.findConfigsForJobs),
 			builder.WithPredicates(predicate.ResourceVersionChangedPredicate{}),
 		).

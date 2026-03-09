@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"context"
 	"fmt"
 	gomegaTypes "github.com/onsi/gomega/types"
 	"github.com/szeber/kube-stager-prometheus-static-target/internal/prometheus"
@@ -53,8 +52,6 @@ var _ = Describe("Additional Scrape Config controller", func() {
 
 	configLookupKey := types.NamespacedName{Name: ConfigName, Namespace: ConfigNamespace}
 	secretLookupKey := types.NamespacedName{Name: SecretName, Namespace: SecretNamespace}
-
-	ctx := context.Background()
 
 	var matchingJob1 *prometheusv1.ScrapeJob
 	var matchingJob2 *prometheusv1.ScrapeJob
@@ -187,10 +184,24 @@ var _ = Describe("Additional Scrape Config controller", func() {
 		}
 	}
 
-	Context("When adding a matching Scrape Job", func() {
-		It("Should add the job to the status", func() {
+	Context("When adding a matching Scrape Job", Ordered, func() {
+		BeforeAll(func() {
 			createNamespaces()
 			createCommonJobs()
+		})
+
+		AfterEach(func() {
+			config := &prometheusv1.AdditionalScrapeConfig{}
+			if err := k8sClient.Get(ctx, configLookupKey, config); err == nil {
+				Expect(k8sClient.Delete(ctx, config)).Should(Succeed())
+			}
+			secret := &v1.Secret{}
+			if err := k8sClient.Get(ctx, secretLookupKey, secret); err == nil {
+				Expect(k8sClient.Delete(ctx, secret)).Should(Succeed())
+			}
+		})
+
+		It("Should add the job to the status", func() {
 			createdConfig := createConfig()
 
 			By("By checking the status's discovered jobs")
@@ -203,8 +214,6 @@ var _ = Describe("Additional Scrape Config controller", func() {
 			}).Should(Equal([]string{"test1/valid-1", "test2/valid-2"}))
 		})
 		It("Should update the existing secret overwriting the key", func() {
-			createNamespaces()
-			createCommonJobs()
 			createSecret(map[string][]byte{"otherKey": []byte("test"), SecretKey: []byte("test2")})
 			createConfig()
 
@@ -219,8 +228,6 @@ var _ = Describe("Additional Scrape Config controller", func() {
 			}).Should(matchSecretData(SecretKey, getPrometheusData(), map[string][]byte{"otherKey": []byte("test")}))
 		})
 		It("Should update the existing secret", func() {
-			createNamespaces()
-			createCommonJobs()
 			createSecret(nil)
 			createConfig()
 
@@ -235,8 +242,6 @@ var _ = Describe("Additional Scrape Config controller", func() {
 			}).Should(matchSecretData(SecretKey, getPrometheusData(), map[string][]byte{}))
 		})
 		It("Should create the secret if it does not exist", func() {
-			createNamespaces()
-			createCommonJobs()
 			createConfig()
 
 			secret := &v1.Secret{}

@@ -65,8 +65,14 @@ spec:
         - /manager
         args:
         - --leader-elect
+        - --health-probe-bind-address=:8081
+        - --metrics-bind-address=:8080
         image: controller:latest
         name: manager
+        ports:
+        - containerPort: 8080
+          name: http-metrics
+          protocol: TCP
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
