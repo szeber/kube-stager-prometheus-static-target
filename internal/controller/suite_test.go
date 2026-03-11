@@ -34,6 +34,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	prometheusv1 "github.com/szeber/kube-stager-prometheus-static-target/api/v1"
+	"github.com/szeber/kube-stager-prometheus-static-target/internal/testutil"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -53,6 +54,8 @@ func TestAPIs(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
+	testutil.SafeguardKubeconfig()
+
 	logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
 
 	ctx, cancel = context.WithCancel(context.TODO())
@@ -68,6 +71,7 @@ var _ = BeforeSuite(func() {
 	cfg, err = testEnv.Start()
 	Expect(err).NotTo(HaveOccurred())
 	Expect(cfg).NotTo(BeNil())
+	Expect(testutil.ValidateTestConfig(cfg)).To(Succeed())
 
 	err = prometheusv1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())

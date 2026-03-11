@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"reflect"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -40,11 +41,12 @@ import (
 	prometheusv1 "github.com/szeber/kube-stager-prometheus-static-target/api/v1"
 )
 
-// AdditionalScrapeConfigReconciler reconciles a AdditionalScrapeConfig object
+const metricsFinalizerName = "prometheus-static-target.kube-stager.io/metrics-cleanup"
+
 type AdditionalScrapeConfigReconciler struct {
 	client.Client
 	Scheme     *runtime.Scheme
-	KubeClient *kubernetes.Client
+	KubeClient kubernetes.ClientInterface
 }
 
 //+kubebuilder:rbac:groups=prometheus-static-target.kube-stager.io,resources=additionalscrapeconfigs,verbs=get;list;watch;create;update;patch;delete
@@ -60,7 +62,29 @@ func (r *AdditionalScrapeConfigReconciler) Reconcile(ctx context.Context, req ct
 
 	configYaml, err := r.KubeClient.GetAdditionalScrapeConfig(ctx, req.Namespace, req.Name)
 	if nil != err {
-		return ctrl.Result{}, err
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// Gauge vectors retain stale label sets after CR deletion; the finalizer ensures cleanup.
+	if !configYaml.DeletionTimestamp.IsZero() {
+		if controllerutil.ContainsFinalizer(configYaml, metricsFinalizerName) {
+			discoveredJobsGauge.DeleteLabelValues(configYaml.Name, configYaml.Namespace)
+			filteredJobsGauge.DeleteLabelValues(configYaml.Name, configYaml.Namespace)
+			scrapeJobsLoadedGauge.DeleteLabelValues(configYaml.Name, configYaml.Namespace)
+			controllerutil.RemoveFinalizer(configYaml, metricsFinalizerName)
+			if err := r.Update(ctx, configYaml); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{}, nil
+	}
+
+	if !controllerutil.ContainsFinalizer(configYaml, metricsFinalizerName) {
+		controllerutil.AddFinalizer(configYaml, metricsFinalizerName)
+		if err := r.Update(ctx, configYaml); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
 	}
 
 	targetList, err := r.loadTargets(ctx, logger, configYaml)
@@ -88,6 +112,7 @@ func (r *AdditionalScrapeConfigReconciler) loadTargets(ctx context.Context, logg
 	}
 
 	logger.Info(fmt.Sprintf("Loaded %d targets matching the labels", len(targetList.Items)))
+	scrapeJobsLoadedGauge.WithLabelValues(config.Name, config.Namespace).Set(float64(len(targetList.Items)))
 
 	return targetList, err
 }
@@ -95,8 +120,10 @@ func (r *AdditionalScrapeConfigReconciler) loadTargets(ctx context.Context, logg
 func (r *AdditionalScrapeConfigReconciler) processTargets(config *prometheusv1.AdditionalScrapeConfig, targetList *prometheusv1.ScrapeJobList) ([]string, []prometheus.Job) {
 	var discoveredJobs []string
 	var jobs []prometheus.Job
+	var filteredCount int
 	for _, target := range targetList.Items {
 		if !config.Spec.ScrapeJobNamespaceSelector.Matches(target.Namespace, config.Namespace) {
+			filteredCount++
 			continue
 		}
 		discoveredJobs = append(discoveredJobs, fmt.Sprintf("%s/%s", target.Namespace, target.Name))
@@ -116,10 +143,16 @@ func (r *AdditionalScrapeConfigReconciler) processTargets(config *prometheusv1.A
 
 	sort.Strings(discoveredJobs)
 
+	discoveredJobsGauge.WithLabelValues(config.Name, config.Namespace).Set(float64(len(jobs)))
+	filteredJobsGauge.WithLabelValues(config.Name, config.Namespace).Set(float64(filteredCount))
+
 	return discoveredJobs, jobs
 }
 
 func (r *AdditionalScrapeConfigReconciler) updateStatusIfNeeded(ctx context.Context, discoveredTargets []string, config *prometheusv1.AdditionalScrapeConfig) error {
+	if len(discoveredTargets) == 0 && len(config.Status.DiscoveredScrapeJobs) == 0 {
+		return nil
+	}
 	if !reflect.DeepEqual(discoveredTargets, config.Status.DiscoveredScrapeJobs) {
 		config.Status.DiscoveredScrapeJobs = discoveredTargets
 		return r.Status().Update(ctx, config)
@@ -155,7 +188,14 @@ func (r *AdditionalScrapeConfigReconciler) updateSecret(ctx context.Context, log
 	secret.Data[config.Spec.SecretKey] = yamlData
 	logger.V(1).Info(fmt.Sprintf("Updating secret to %+v", secret.Data))
 
-	return r.KubeClient.CreateOrUpdateSecret(ctx, secretExists, secret)
+	if err = r.KubeClient.CreateOrUpdateSecret(ctx, secretExists, secret); err != nil {
+		secretUpdateErrorCounter.WithLabelValues(config.Name, config.Namespace).Inc()
+		return err
+	}
+
+	secretUpdateCounter.WithLabelValues(config.Name, config.Namespace).Inc()
+
+	return nil
 }
 
 func (r *AdditionalScrapeConfigReconciler) findConfigsForSecret(ctx context.Context, secret client.Object) []reconcile.Request {
@@ -222,7 +262,6 @@ func (r *AdditionalScrapeConfigReconciler) findConfigsForJobs(ctx context.Contex
 	return requests
 }
 
-// SetupWithManager sets up the controller with the Manager.
 func (r *AdditionalScrapeConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	if r.KubeClient == nil {
 		r.KubeClient = kubernetes.NewClient(r.Client)
@@ -230,7 +269,6 @@ func (r *AdditionalScrapeConfigReconciler) SetupWithManager(mgr ctrl.Manager) er
 
 	if err := mgr.GetFieldIndexer().IndexField(
 		context.Background(), &prometheusv1.AdditionalScrapeConfig{}, ".spec.secretName", func(rawObj client.Object) []string {
-			// grab the config object, extract the short name.
 			config := rawObj.(*prometheusv1.AdditionalScrapeConfig)
 			return []string{config.Spec.SecretName}
 		},

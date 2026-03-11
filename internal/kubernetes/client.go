@@ -9,6 +9,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+type ClientInterface interface {
+	GetAdditionalScrapeConfig(ctx context.Context, namespace string, name string) (*prometheusv1.AdditionalScrapeConfig, error)
+	LoadScrapeJobs(ctx context.Context, config *prometheusv1.AdditionalScrapeConfig) (*prometheusv1.ScrapeJobList, error)
+	GetSecret(ctx context.Context, config *prometheusv1.AdditionalScrapeConfig) (*corev1.Secret, bool, error)
+	CreateOrUpdateSecret(ctx context.Context, secretExists bool, secret *corev1.Secret) error
+	FindAdditionalScrapeConfigsForSecret(ctx context.Context, secret client.Object) (*prometheusv1.AdditionalScrapeConfigList, error)
+	GetAllAdditionalScrapeConfigs(ctx context.Context) (*prometheusv1.AdditionalScrapeConfigList, error)
+}
+
 type Client struct {
 	parentClient client.Client
 }

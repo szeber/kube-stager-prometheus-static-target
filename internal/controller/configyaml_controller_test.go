@@ -6,7 +6,9 @@ import (
 	"github.com/szeber/kube-stager-prometheus-static-target/internal/prometheus"
 	"gopkg.in/yaml.v2"
 	v1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -184,6 +186,23 @@ var _ = Describe("Additional Scrape Config controller", func() {
 		}
 	}
 
+	deleteConfigAndSecret := func() {
+		config := &prometheusv1.AdditionalScrapeConfig{}
+		if err := k8sClient.Get(ctx, configLookupKey, config); err == nil {
+			Expect(k8sClient.Delete(ctx, config)).Should(Succeed())
+			Eventually(func() bool {
+				return apierrors.IsNotFound(k8sClient.Get(ctx, configLookupKey, config))
+			}, timeout, interval).Should(BeTrue())
+		}
+		secret := &v1.Secret{}
+		if err := k8sClient.Get(ctx, secretLookupKey, secret); err == nil {
+			Expect(k8sClient.Delete(ctx, secret)).Should(Succeed())
+			Eventually(func() bool {
+				return apierrors.IsNotFound(k8sClient.Get(ctx, secretLookupKey, secret))
+			}, timeout, interval).Should(BeTrue())
+		}
+	}
+
 	Context("When adding a matching Scrape Job", Ordered, func() {
 		BeforeAll(func() {
 			createNamespaces()
@@ -191,14 +210,7 @@ var _ = Describe("Additional Scrape Config controller", func() {
 		})
 
 		AfterEach(func() {
-			config := &prometheusv1.AdditionalScrapeConfig{}
-			if err := k8sClient.Get(ctx, configLookupKey, config); err == nil {
-				Expect(k8sClient.Delete(ctx, config)).Should(Succeed())
-			}
-			secret := &v1.Secret{}
-			if err := k8sClient.Get(ctx, secretLookupKey, secret); err == nil {
-				Expect(k8sClient.Delete(ctx, secret)).Should(Succeed())
-			}
+			deleteConfigAndSecret()
 		})
 
 		It("Should add the job to the status", func() {
@@ -255,6 +267,330 @@ var _ = Describe("Additional Scrape Config controller", func() {
 			}).Should(matchSecretData(SecretKey, getPrometheusData(), map[string][]byte{}))
 		})
 	})
+
+	Context("When no ScrapeJobs match", Ordered, func() {
+		AfterAll(func() {
+			deleteConfigAndSecret()
+		})
+
+		It("Should have empty status and empty secret data", func() {
+			config := prometheusv1.AdditionalScrapeConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ConfigName,
+					Namespace: ConfigNamespace,
+				},
+				Spec: prometheusv1.AdditionalScrapeConfigSpec{
+					SecretName:      SecretName,
+					SecretNamespace: SecretNamespace,
+					SecretKey:       SecretKey,
+					ScrapeJobLabels: map[string]string{"target": "nonexistent"},
+					ScrapeJobNamespaceSelector: prometheusv1.NamespaceSelector{
+						Any: true,
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, &config)).Should(Succeed())
+
+			secret := &v1.Secret{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, secretLookupKey, secret)
+				return err == nil
+			}, timeout, interval).Should(BeTrue())
+
+			yamlData, _ := yaml.Marshal([]prometheus.Job(nil))
+			Expect(string(secret.Data[SecretKey])).To(MatchYAML(yamlData))
+
+			createdConfig := &prometheusv1.AdditionalScrapeConfig{}
+			Expect(k8sClient.Get(ctx, configLookupKey, createdConfig)).Should(Succeed())
+			Expect(createdConfig.Status.DiscoveredScrapeJobs).To(BeNil())
+		})
+	})
+
+	Context("When a ScrapeJob is deleted", Ordered, func() {
+		var deletableJob *prometheusv1.ScrapeJob
+
+		BeforeAll(func() {
+			deletableJob = createJob("deletable-job", "test1", validJobLabels, prometheusv1.ScrapeJobSpec{
+				JobName: "deletable",
+				StaticConfigs: []prometheusv1.ScrapeJobStaticConfig{
+					{Targets: []string{"http://deletable"}, Labels: map[string]string{"job": "deletable"}},
+				},
+			})
+			createConfig()
+
+			// Wait until the deletable job appears in status
+			createdConfig := &prometheusv1.AdditionalScrapeConfig{}
+			Eventually(func() bool {
+				if err := k8sClient.Get(ctx, configLookupKey, createdConfig); err != nil {
+					return false
+				}
+				for _, j := range createdConfig.Status.DiscoveredScrapeJobs {
+					if j == "test1/deletable-job" {
+						return true
+					}
+				}
+				return false
+			}, timeout, interval).Should(BeTrue())
+		})
+
+		AfterAll(func() {
+			deleteConfigAndSecret()
+		})
+
+		It("Should remove the job from status and update secret after deletion", func() {
+			Expect(k8sClient.Delete(ctx, deletableJob)).Should(Succeed())
+
+			createdConfig := &prometheusv1.AdditionalScrapeConfig{}
+			Eventually(func() bool {
+				if err := k8sClient.Get(ctx, configLookupKey, createdConfig); err != nil {
+					return false
+				}
+				for _, j := range createdConfig.Status.DiscoveredScrapeJobs {
+					if j == "test1/deletable-job" {
+						return false
+					}
+				}
+				return true
+			}, timeout, interval).Should(BeTrue())
+		})
+	})
+
+	Context("When a ScrapeJob is updated", Ordered, func() {
+		BeforeAll(func() {
+			createConfig()
+		})
+
+		AfterAll(func() {
+			deleteConfigAndSecret()
+		})
+
+		It("Should reflect the updated job in the secret", func() {
+			// Wait for initial reconciliation
+			createdConfig := &prometheusv1.AdditionalScrapeConfig{}
+			Eventually(func() ([]string, error) {
+				if err := k8sClient.Get(ctx, configLookupKey, createdConfig); err != nil {
+					return nil, err
+				}
+				return createdConfig.Status.DiscoveredScrapeJobs, nil
+			}, timeout, interval).Should(ContainElement("test1/valid-1"))
+
+			// Update the job
+			job := &prometheusv1.ScrapeJob{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: "test1", Name: "valid-1"}, job)).Should(Succeed())
+			job.Spec.StaticConfigs[0].Targets = []string{"http://updated-target"}
+			Expect(k8sClient.Update(ctx, job)).Should(Succeed())
+
+			// Verify the secret reflects the update
+			secret := &v1.Secret{}
+			Eventually(func() string {
+				if err := k8sClient.Get(ctx, secretLookupKey, secret); err != nil {
+					return ""
+				}
+				return string(secret.Data[SecretKey])
+			}, timeout, interval).Should(ContainSubstring("http://updated-target"))
+		})
+	})
+
+	Context("When the secret is externally modified", Ordered, func() {
+		BeforeAll(func() {
+			createConfig()
+		})
+
+		AfterAll(func() {
+			deleteConfigAndSecret()
+		})
+
+		It("Should restore the secret to the correct state", func() {
+			// Wait for initial secret creation
+			secret := &v1.Secret{}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, secretLookupKey, secret)
+				return err == nil && len(secret.Data[SecretKey]) > 0
+			}, timeout, interval).Should(BeTrue())
+
+			// Tamper with the secret
+			secret.Data[SecretKey] = []byte("tampered")
+			Expect(k8sClient.Update(ctx, secret)).Should(Succeed())
+
+			// Verify the controller restores it
+			Eventually(func() bool {
+				if err := k8sClient.Get(ctx, secretLookupKey, secret); err != nil {
+					return false
+				}
+				return string(secret.Data[SecretKey]) != "tampered" && len(secret.Data[SecretKey]) > 0
+			}, timeout, interval).Should(BeTrue())
+		})
+	})
+
+	Context("When a ScrapeJob's labels change to no longer match", Ordered, func() {
+		var mutableJob *prometheusv1.ScrapeJob
+
+		BeforeAll(func() {
+			mutableJob = createJob("mutable-job", "test1", validJobLabels, prometheusv1.ScrapeJobSpec{
+				JobName: "mutable",
+				StaticConfigs: []prometheusv1.ScrapeJobStaticConfig{
+					{Targets: []string{"http://mutable"}, Labels: map[string]string{"job": "mutable"}},
+				},
+			})
+			createConfig()
+
+			// Wait until the mutable job appears in status
+			createdConfig := &prometheusv1.AdditionalScrapeConfig{}
+			Eventually(func() bool {
+				if err := k8sClient.Get(ctx, configLookupKey, createdConfig); err != nil {
+					return false
+				}
+				for _, j := range createdConfig.Status.DiscoveredScrapeJobs {
+					if j == "test1/mutable-job" {
+						return true
+					}
+				}
+				return false
+			}, timeout, interval).Should(BeTrue())
+		})
+
+		AfterAll(func() {
+			deleteConfigAndSecret()
+			if mutableJob != nil {
+				_ = k8sClient.Delete(ctx, mutableJob)
+			}
+		})
+
+		It("Should remove the job from status after labels change", func() {
+			// Change labels so it no longer matches
+			job := &prometheusv1.ScrapeJob{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Namespace: "test1", Name: "mutable-job"}, job)).Should(Succeed())
+			job.Labels = map[string]string{"target": "no-match"}
+			Expect(k8sClient.Update(ctx, job)).Should(Succeed())
+
+			createdConfig := &prometheusv1.AdditionalScrapeConfig{}
+			Eventually(func() bool {
+				if err := k8sClient.Get(ctx, configLookupKey, createdConfig); err != nil {
+					return false
+				}
+				for _, j := range createdConfig.Status.DiscoveredScrapeJobs {
+					if j == "test1/mutable-job" {
+						return false
+					}
+				}
+				return true
+			}, timeout, interval).Should(BeTrue())
+		})
+	})
+
+	Context("When NamespaceSelector.Any is true", Ordered, func() {
+		AfterAll(func() {
+			deleteConfigAndSecret()
+		})
+
+		It("Should discover jobs in all namespaces", func() {
+			config := prometheusv1.AdditionalScrapeConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ConfigName,
+					Namespace: ConfigNamespace,
+				},
+				Spec: prometheusv1.AdditionalScrapeConfigSpec{
+					SecretName:      SecretName,
+					SecretNamespace: SecretNamespace,
+					SecretKey:       SecretKey,
+					ScrapeJobLabels: validJobLabels,
+					ScrapeJobNamespaceSelector: prometheusv1.NamespaceSelector{
+						Any: true,
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, &config)).Should(Succeed())
+
+			createdConfig := &prometheusv1.AdditionalScrapeConfig{}
+			Eventually(func() ([]string, error) {
+				if err := k8sClient.Get(ctx, configLookupKey, createdConfig); err != nil {
+					return nil, err
+				}
+				return createdConfig.Status.DiscoveredScrapeJobs, nil
+			}, timeout, interval).Should(ContainElement("test3/different-namespace"))
+		})
+	})
+
+	Context("When NamespaceSelector has no MatchNames", Ordered, func() {
+		AfterAll(func() {
+			deleteConfigAndSecret()
+		})
+
+		It("Should only discover jobs in the config's own namespace", func() {
+			// Create a job in default namespace with valid labels
+			ownNsJob := createJob("own-ns-job", ConfigNamespace, validJobLabels, prometheusv1.ScrapeJobSpec{
+				JobName: "own-ns",
+				StaticConfigs: []prometheusv1.ScrapeJobStaticConfig{
+					{Targets: []string{"http://own-ns"}, Labels: map[string]string{"job": "own-ns"}},
+				},
+			})
+
+			config := prometheusv1.AdditionalScrapeConfig{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      ConfigName,
+					Namespace: ConfigNamespace,
+				},
+				Spec: prometheusv1.AdditionalScrapeConfigSpec{
+					SecretName:                 SecretName,
+					SecretNamespace:            SecretNamespace,
+					SecretKey:                  SecretKey,
+					ScrapeJobLabels:            validJobLabels,
+					ScrapeJobNamespaceSelector: prometheusv1.NamespaceSelector{},
+				},
+			}
+			Expect(k8sClient.Create(ctx, &config)).Should(Succeed())
+
+			createdConfig := &prometheusv1.AdditionalScrapeConfig{}
+			Eventually(func() ([]string, error) {
+				if err := k8sClient.Get(ctx, configLookupKey, createdConfig); err != nil {
+					return nil, err
+				}
+				return createdConfig.Status.DiscoveredScrapeJobs, nil
+			}, timeout, interval).Should(And(
+				ContainElement(fmt.Sprintf("%s/own-ns-job", ConfigNamespace)),
+				Not(ContainElement("test1/valid-1")),
+			))
+
+			// Cleanup the job we created
+			Expect(k8sClient.Delete(ctx, ownNsJob)).Should(Succeed())
+		})
+	})
+
+	Context("Finalizer lifecycle", Ordered, func() {
+		AfterAll(func() {
+			deleteConfigAndSecret()
+		})
+
+		It("Should add a finalizer after creation and clean up gauges on deletion", func() {
+			createConfig()
+
+			createdConfig := &prometheusv1.AdditionalScrapeConfig{}
+			Eventually(func() bool {
+				if err := k8sClient.Get(ctx, configLookupKey, createdConfig); err != nil {
+					return false
+				}
+				return controllerutil.ContainsFinalizer(createdConfig, metricsFinalizerName)
+			}, timeout, interval).Should(BeTrue())
+
+			gaugeLabels := map[string]string{"config_name": ConfigName, "config_namespace": ConfigNamespace}
+
+			// Wait for gauges to be populated by reconciliation
+			Eventually(func() bool {
+				return gaugeLabelSetExists(discoveredJobsGauge, gaugeLabels)
+			}, timeout, interval).Should(BeTrue())
+
+			Expect(k8sClient.Delete(ctx, createdConfig)).Should(Succeed())
+
+			Eventually(func() bool {
+				return apierrors.IsNotFound(k8sClient.Get(ctx, configLookupKey, createdConfig))
+			}, timeout, interval).Should(BeTrue())
+
+			// Finalizer should have removed gauge label sets
+			Expect(gaugeLabelSetExists(discoveredJobsGauge, gaugeLabels)).To(BeFalse())
+			Expect(gaugeLabelSetExists(filteredJobsGauge, gaugeLabels)).To(BeFalse())
+			Expect(gaugeLabelSetExists(scrapeJobsLoadedGauge, gaugeLabels)).To(BeFalse())
+		})
+	})
 })
 
 func matchSecretData(secretKey string, prometheusData []prometheus.Job, remainingSecretData map[string][]byte) gomegaTypes.GomegaMatcher {
@@ -291,9 +627,14 @@ func (r *matchSecretDataMatcher) Match(actual interface{}) (success bool, err er
 		return success, nil
 	}
 
-	delete(actualMap, r.secretKey)
+	remaining := make(map[string][]byte, len(actualMap)-1)
+	for k, v := range actualMap {
+		if k != r.secretKey {
+			remaining[k] = v
+		}
+	}
 
-	return r.equalMatcher.Match(actualMap)
+	return r.equalMatcher.Match(remaining)
 }
 
 func (r *matchSecretDataMatcher) FailureMessage(actual interface{}) (message string) {
