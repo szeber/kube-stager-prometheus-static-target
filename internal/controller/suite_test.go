@@ -61,9 +61,11 @@ var _ = BeforeSuite(func() {
 	ctx, cancel = context.WithCancel(context.TODO())
 
 	By("bootstrapping test environment")
+	useExistingCluster := false
 	testEnv = &envtest.Environment{
 		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
 		ErrorIfCRDPathMissing: true,
+		UseExistingCluster:    &useExistingCluster,
 	}
 
 	var err error
@@ -71,7 +73,7 @@ var _ = BeforeSuite(func() {
 	cfg, err = testEnv.Start()
 	Expect(err).NotTo(HaveOccurred())
 	Expect(cfg).NotTo(BeNil())
-	Expect(testutil.ValidateTestConfig(cfg)).To(Succeed())
+	Expect(testutil.RequireLocalAPIServer(cfg)).To(Succeed())
 
 	err = prometheusv1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())

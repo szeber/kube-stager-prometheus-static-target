@@ -48,7 +48,7 @@ func TestSafeguardKubeconfig(t *testing.T) {
 	}
 }
 
-func TestValidateTestConfig(t *testing.T) {
+func TestRequireLocalAPIServer(t *testing.T) {
 	tests := []struct {
 		name    string
 		cfg     *rest.Config
@@ -65,9 +65,9 @@ func TestValidateTestConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateTestConfig(tt.cfg)
+			err := RequireLocalAPIServer(tt.cfg)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateTestConfig() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("RequireLocalAPIServer() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}
