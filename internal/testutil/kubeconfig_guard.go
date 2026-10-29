@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -24,10 +25,9 @@ func SafeguardKubeconfig() {
 	}
 }
 
-// ValidateTestConfig checks that a rest.Config points to a local address (envtest).
-func ValidateTestConfig(cfg *rest.Config) error {
+func RequireLocalAPIServer(cfg *rest.Config) error {
 	if cfg == nil {
-		return fmt.Errorf("rest.Config is nil")
+		return errors.New("rest.Config is nil")
 	}
 
 	host := cfg.Host
@@ -35,27 +35,16 @@ func ValidateTestConfig(cfg *rest.Config) error {
 		host = "https://" + host
 	}
 
-	parsed, err := url.Parse(host)
+	apiServerURL, err := url.Parse(host)
 	if err != nil {
 		return fmt.Errorf("failed to parse config host %q: %w", cfg.Host, err)
 	}
 
-	hostname := parsed.Hostname()
-	if hostname == "" {
-		hostname = cfg.Host
-	}
-
+	hostname := apiServerURL.Hostname()
 	ip := net.ParseIP(hostname)
-	if ip != nil {
-		if ip.IsLoopback() {
-			return nil
-		}
-		return fmt.Errorf("test config host %q is not a loopback address", cfg.Host)
-	}
-
-	if hostname == "localhost" {
+	if hostname == "localhost" || (ip != nil && ip.IsLoopback()) {
 		return nil
 	}
 
-	return fmt.Errorf("test config host %q is not a local address", cfg.Host)
+	return fmt.Errorf("test API server %q is not on a loopback address", cfg.Host)
 }

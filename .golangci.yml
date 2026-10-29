@@ -1,3 +1,9 @@
 version: "2"
 run:
   timeout: 5m
+linters:
+  exclusions:
+    rules:
+      - linters:
+          - staticcheck
+        text: "SA1019: sigs.k8s.io/controller-runtime/pkg/scheme.Builder is deprecated"
